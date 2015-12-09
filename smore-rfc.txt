@@ -1,0 +1,480 @@
+Internet‐Draft                                                 B. Hamlin
+Intended status: Experimental                  Portland State University
+Expires May 2016                                       November 12, 2015
+
+    sMORE: Secure Mac‐Independent Opportunistic Routing Enhancement
+                       for Wireless Mesh Networks
+
+Status of this Memo
+
+   This memo defines an Experimental Protocol for the Internet community.
+   This memo does not specify an Internet standard of any kind.  Discussion
+   and suggestions for improvement are requested.  Distribution of this
+   memo is unlimited.
+
+   This Internet‐Draft is submitted to IETF pursuant to, and in full
+   conformance with, the provisions of BCP 78 and BCP 79.
+
+   Internet‐Drafts are working documents of the Internet Engineering Task
+   Force (IETF), its areas, and its working groups.  Note that other groups
+   may also distribute working documents as Internet‐Drafts.
+
+   Internet‐Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet‐Drafts as reference material
+   or to cite them other than as "work in progress."
+
+   The list of current Internet‐Drafts can be accessed at
+   http://www.ietf.org/ietf/1id‐abstracts.txt.
+
+   The list of Internet‐Draft Shadow Directories can be accessed at
+   http://www.ietf.org/shadow.html.
+
+   This Internet‐Draft will expire on May 12, 2016.
+
+Copyright Notice
+
+   Copyright (c) 2015 IETF Trust and the persons identified as
+   the document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust’s Legal
+   Provisions Relating to IETF Documents
+   (http://trustee.ietf.org/license‐info) in effect on the date of
+   publication of this document.  Please review these documents carefully,
+   as they describe your rights and restrictions with respect to this
+   document.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Abstract
+
+Table of Contents
+
+   1. Introduction ....................................................X
+   2. Concepts ........................................................X
+      2.1. Random Linear Network Coding ...............................X
+      2.2. Pseudo‐Random Number Generation ............................X
+      2.3. Checksum Generation and Validation .........................X
+   3. Operation .......................................................X
+      3.1. Originators ................................................X
+      3.2. Forwarders .................................................X
+      3.3. Receivers ..................................................X
+   4. sMORE Header Format .............................................X
+   5. References ......................................................X
+
+1. Introduction
+
+   sMORE is a protocol that enhances a wireless mesh network with intra‐
+   flow network coding.  It is based on the MORE protocol described in
+   [2].  It adds to this a checksum system designed to prevent pollution
+   attacks, similar to the one used in DART [3].
+
+   sMORE, like MORE, sits between the link and network layers in the
+   protocol stack.  It uses random linear network coding (RLNC) and
+   multiple forwarders to increase the reliability of transmitting
+   packets above a particular size.  A limitation of this protocol (and
+   random linear network coding in general, is that it is easy for
+   malicious forwarders to send incorrect packets and "pollute" the
+   input to other forwarders and eventually the receiver, making
+   decoding impossible.
+
+   Traditional approaches to guaranteeing integrity (such as
+   cryptographic hashing or digital signing) are infeasible when the
+   object being signed is coded with RLNC.  Since each intermediate node
+   recodes the packets it has received into a new random linear
+   combination, the source would have to send a signature for each
+   possible random linear combination, which would obviously have
+   prohibitive cost, since the number of combinations is large.
+
+   Another approach would be to use homomorphic digital signatures, such
+   that S(a + b) = S(a) # S(b), for some binary operation #.  This
+   approach has been tried, but at the moment, all known homomorphic
+   digital signing schemes have a prohibitively high computational cost.
+
+   The approach sMORE takes is not a cryptographic one.  Rather, we use
+   a simple, small, and cheap to compute checksum matrix checksum that
+   is invariant under linear combination.  This type of checksum was
+   first proposed in [2], which describes a protocol called DART.  Since
+   these checksums are not cryptographic, it would be possible for a
+   node to engineer its pollution in such a way that the polluted packet
+   was collided with the original one under a particular checksum.
+
+   DART deals with this by using a time‐delay system, where a packet can
+   only be validated using a checksum timestamped after the packet was
+   received.  This introduces latency at each step of the forwarding
+   process, however, and creates a profusion of checksum packets that
+   must be forwarded by all nodes.
+
+   In contrast, sMORE proposes to deal with this by piggy‐backing a
+   number of small random checksums on each packet.  Each of these
+   checksums represents a separate constraint a polluter would need to
+   meet in order to be undetected.  In addition, these checksums
+   accumulate into a checksum matrix at each forwarder and at the
+   receiver, ideally making the task of computing collisions
+   prohibitively high.
+
+   The structure of this document is as follows: Section 2 introduces
+   the theoretical underpinnings of the protocol, namely RLNC, the PRNG
+   used in POSIX’s rand48, and matrix checksums.  Section 3 introduces
+   the operating modes that nodes can take on in sMORE: originator,
+   forwarder, and receiver.  Finally, section 4 describes the sMORE
+   header format in detail.
+
+2. Concepts
+
+   In this section, I introduce the basic theoretical building blocks of
+   sMORE.
+
+2.1. Random Linear Network Coding
+
+   sMORE divides a flow into batches and then combines all "native"
+   packets in a batch using a technique called random linear network
+   coding.  In brief, this involves regarding each message as a vector
+   over a finite field and producing a series of linear combinations of
+   these vectors.
+
+   The finite field used in sMORE is GF256 (i.e., GF(2^8)), which means
+   that each byte is a member of the field.  To form this field, simply
+   take the polynomial ring over intergers modulo 2, K[2] and divide it
+   by the ideal generated by an order‐8 irruducible polynomial P to get
+   the quotient ring K[2]/P.  sMORE uses the irriducible polynomial from
+   Rijndael:
+
+   P = x^8 + x^4 + x^3 + x + 1
+
+   Regarding packets as vectors over a finite field provides us with two
+   operations, addition and multiplication, such that multiplication
+   distributes over addition.  In this case, addition is simply XOR, and
+   multiplication is polynomial multiplication modulo P.  These two
+   operations allow us to compute random linear combinations.
+
+   To encode K packets, p1 ... pK, one selects a vector of order K of
+   non‐zero coefficients in GF256, E = e1 ... eK, and calculates C =
+   e1*p1 + ... + eK*pK.  A codeword, W = E | C, where | represents
+   concatenation.  To recode a vector of N codewords, a forwarder
+   seperates each codeword Wi into its constituent Ci and Ei, then pick
+   new random coefficient vector, F = f1 ... fN and computes C’ = f1*C1
+   + ... fN*CN and E’ = f1*E1 + ... + fN*EN. Once again, the codeword W’
+   = E’ | C’.
+
+2.2. Pseudo‐Random Number Generation
+
+   sMORE sends PRNG seeds so that receivers and forwarders can
+   reconstruct pseudo‐random code‐vectors and checksum matrices.  All
+   nodes must therefore agree on a PRNG so that the pseudo‐random
+   sequences they generate agree.
+
+   The PRNG to be used is given by the function
+
+   Xn+1 = 1 + (aXn + c) % m
+
+   with a = 0x1DEADBEEF, b = 0xB, and m = 255.  If the seed is, for
+   example, 0x1FEEDFACE, his can be acheived on a POSIX system by
+   calling
+
+   unsigned short s[] = {0x0001, 0xFEED, 0xFACE,
+                         0x0001, 0xDEAD, 0xBEEF, 0x000D};
+   lcong48(s);
+
+   Then to generate the next coefficient, use
+
+   unsigned char r = (lrand() % 255) + 1
+
+2.2. Checksum Generation and Validation
+
+   sMORE uses checksums to prevent pollution attacks.  A packet can be
+   mixed or decoded only after it has been validated using a checksum
+   from a packet with a later timestamp.  In addition, the checksums
+   must be hashed using a digital signature.  Checksums are generated in
+   a way similar to that used by DART/EDART [3].
+
+   To generate the checksum C, let G be a K by m matrix over GF256,
+   consisting of the original K m‐bit native packets.  Use some seed s
+   to generate H, an m by b matrix over GF256.  Then the checksum can be
+   generated as follows:
+
+   C = GH
+
+   To validate a packet using the checksum, if c is the coefficient
+   vector and e is the encoded batch, a forwarder or receiver simply
+   needs to verify that the following holds:
+
+   Cc = He
+
+   The parameter b is a configurable security parameter.  It indicates
+   the number of columns in the checksum matrix, each of which
+   correlates to a constraint an attacker would have to satisfy in order
+   to create a collision.
+
+3. Operation
+
+   In this section, I introduce the three roles nodes can play in sMORE
+   and discuss what those roles entail.
+
+3.1. Originators
+
+   When an originator S receives data to send from the network layer, it
+   starts a timer, batch_timer.  Once S has K m‐byte messages to send,
+   or once batch_timer has expired, it starts a timer, ack_timer, and
+   begins creating random linear combinations of packets and
+   broadcasting them to all nodes within range.  Every additionally
+   contains a checksum list (see section 2.2).
+
+   It continues sending linear combinations until it receives an ACK for
+   the current batch, or until ack_timer has expired.  Since sMORE sits
+   on top of an existing MAC (such as 802.11), the rate at which the
+   originator sends out linear combinations is limited by this MAC.
+
+   The length of the two timers, ack_timer and batch timer, as well as
+   the values of K and m, are all tunable parameters.  K must not be
+   greater than 256, and m cannot exceed MTU ‐ 96.  Every node must
+   allocate a buffer of size (256 + (MTU ‐ 96))x256 for each flow it
+   intends to receive or forward.  The size of batch_timer should be
+   small, since it introduces delay in sending small messages.
+
+3.2. Forwarders
+
+   Each forwarding node has four responsibilities.  First, it must
+   periodically ping every other node whose existence it is aware of on
+   the layer‐2 broadcast domain.  Since sMORE coexists with some other
+   routing protocol, such as 802.11s or B.A.T.M.A.N., it can send these
+   pings using routed ICMP.  They can be sent relatively infrequently.
+
+   Each time a node sends a ping to a node N, it calculates the current
+   error probability (epN) for sending to N:
+
+   epN = a * old_epN + b * r
+
+   Where a and b are tunable parameters with a > b, and r = 1 if a reply
+   to the ping was received, and r = 0, otherwise.  It then uses epN to
+   determine its expected transmission count for N (etxN):
+
+   etxN = 1 / (1 ‐ epN)
+
+   Second, a forwarder must listen promiscuously to the channel.  When
+   It overhears a packet destined for node D, and its value for etxD is
+   less than the Sender ETX of the packet, it allocates a buffer indexed
+   by the Source IP, Destination IP, Flow ID, and Batch ID of the packet
+   and starts a timer, buffer_timer.
+
+   Once it overhears another packet from the same flow, it will begin
+   creating new linear combinations and forwarding them on, with its new
+   seed added and its ETX substituted in.  The value of buffer_timer is
+   reset each time a new packet for the flow is overheard.
+
+   Before a forwarder can forward a linear combination of packets, it
+   must check each packet to be combined against the matrix of checksums
+   it has accumulated.  Since it cannot forward until it has received at
+   least two packets, the number of checksums is at least 2*b. The
+   forwarder must also check to make sure that a new packet is
+   innovative, that is, linearly independent with all other packets in
+   the buffer before mixing it.  To do this, it can use the same process
+   of Gaussian elimination the receiver does on the coefficient vector
+   matrix to make sure the rank of a coefficient vector matrix for N
+   packets is equal to N.
+
+   A forwarder may stop forwarding and free the buffer associated with a
+   batch once the buffer timer expires.  It may also do so upon
+   receiving a packet from a later batch in the same flow.
+
+3.3. Receivers
+
+   A receiver performs the same checks for linear independence and
+   consistency with later checksums that a forwarder does.  Once a
+   receiver has K linearly independent packets, where K is the batch
+   size, it immediately sends an ACK using shortest‐path routing, and
+   then decodes the batch.  Unicasting ACKs is possible because sMORE
+   coexists with some other traditional routing protocol, such as OLSR.
+   Any further packets in the same batch wll trigger duplicate ACKs.
+
+4. sMORE Header Format
+
+   The format of a sMORE header is as follows
+
+        0                   1                   2                   3
+        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+   (a) |    Version    | Type  |  Res  |         Last ETX              |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                           Source IP                           |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                         Destination IP                        |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                            Flow ID                            |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                           Batch ID                            |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+   (b) |          Batch Size           |         Message Size          |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |   Num coeffs  |    Coeff 1    |    Coeff 2    |    Coeff 3    |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                               .                               |
+       |                               .                               |
+       |                               .                               |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |         Checksum Length       |         Checksum 1...         |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                               .                               |
+       |                               .                               |
+       |                               .                               |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                         Checksum HMAC                         |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+       |                            Payload...                         |
+       +‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+‐+
+
+   Fields in (a) are present in all sMORE packets.  Fields from (b) are
+   present only in sMORE message packets.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      o  Version: The protocol version number.  This is currently set to
+         1.
+
+      o  Type: This indicates whether the packet is an ACK, or message
+         packet.  An ack has type 1, and a message has type 2.
+
+      o  Res: Reserved for future use.
+
+      o  Flow ID: This, along with the source and destination addresses,
+         forms a tuple that uniquely identifies the flow to which this
+         packet belongs.
+
+      o  Source IP: The IP address of the originator of this packet.
+
+      o  Destination IP: The IP address of the recipient of this packet.
+
+      o  Batch ID: In a message packet, this is the batch to which the
+         coded message belongs.  In an ACK, it is the batch being ACKed.
+
+      o  Batch Size: Number of packets in this batch.
+
+      o  Message Size: Number of bytes per message for this batch.
+
+      o  Last ETX: This is the last hop’s expected transmission count
+         for the recipient of the batch.  If a forwarder overhears this
+         packet, and its ETX is less than this, it begins forwarding the
+         batch.
+
+      o  Num Coeffs: This is the coefficient vector for the current
+         linear combination.
+
+      o  Coeff N: This is the Nth coefficient in the coefficient vector.
+
+6.  References
+
+   [1]  Chou, P., Wu, Y., and Jain, K., "Practical network coding",
+   Allerton Conference on Communication, Control, and Computing, October
+   2003.
+
+   [2]  Chachulski, S., Jennings, M., Katti, S., Katabi, D., "Trading
+   Structure for Randomness in Wireless Opportunistic Routing",
+   SIGCOMM’07, August, 2007.
+
+   [3]  Dong, J., Curtmola, R., Nita‐Rotaru, C., "Practical Defenses
+   Against Pollution Attacks in Intra‐Flow Network Coding for Wireless
+   Mesh Networks", WiSec’09, March, 2009.
+
+Authors’ Addresses
+
+   Ben Hamlin
+   Current Address:
+      Unknown (but we are hopeful)
+   EMail: hamlinb@cs.pdx.edu
+
+   Portland State University
+   Portland, OR 97201
+
+
+
+
+Full Copyright Statement
+
+   Copyright (C) The Internet Society (2015).  All Rights Reserved.
+
+   This document and translations of it may be copied and furnished to
+   others, and derivative works that comment on or otherwise explain it
+   or assist in its implmentation may be prepared, copied, published and
+   distributed, in whole or in part, without restriction of any kind,
+   provided that the above copyright notice and this paragraph are
+   included on all such copies and derivative works.  However, this
+   document itself may not be modified in any way, such as by removing
+   the copyright notice or references to the Internet Society or other
+   Internet organizations, except as needed for the purpose of
+   developing Internet standards in which case the procedures for
+   copyrights defined in the Internet Standards process must be
+   followed, or as required to translate it into languages other than
+   English.
+
+   The limited permissions granted above are perpetual and will not be
+   revoked by the Internet Society or its successors or assigns.
+
+   This document and the information contained herein is provided on an
+   "AS IS" basis and THE INTERNET SOCIETY AND THE INTERNET ENGINEERING
+   TASK FORCE DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING
+   BUT NOT LIMITED TO ANY WARRANTY THAT THE USE OF THE INFORMATION
+   HEREIN WILL NOT INFRINGE ANY RIGHTS OR ANY IMPLIED WARRANTIES OF
+   MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -24,3 +24,7 @@ To see a list of options, try
 
 If you'd like to look at the source files I created, they're all contained in
 the `files` subdirectory of the repository directory, for your convenience.
+
+My RFC is in the file called smore-rfc.txt in the repository directory. If you
+want to look at the nroff source (I'm not sure why you would...), that's the
+corresponding `.roff` file.
