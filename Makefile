@@ -16,4 +16,4 @@ run:
 
 clean:
 	@$(MAKE) -C ns-3.24 clean
-	$(RM) $(patsubst %,$(DST)%,$(shell find files -name '*' -type f))
+	$(RM) $(patsubst %,$(DST)/%,$(FILES))
