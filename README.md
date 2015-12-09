@@ -21,3 +21,6 @@ the following from the repository directory:
 To see a list of options, try
 
     ./waf --run scratch/smore --command-template='%s --distance=600'
+
+If you'd like to look at the source files I created, they're all contained in
+the `files` subdirectory of the repository directory, for your convenience.
